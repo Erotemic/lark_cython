@@ -4,13 +4,65 @@ Based on:
 
 Requirements:
     pip install ubelt timerit pandas numpy seaborn matplotlib
+    pip install hypothesis[lark]
 """
 
 
-def random_lark_grammar(size):
+def random_grammar_inputs(python_parser):
     """
-    TODO: could likely be more sophisticated with how we *generate* random
-    text. (Almost as if that's what CFGs do!).
+    A proof of concept for generating multiple random string from a Lark parser
+    with different sizes that the parser should accept.
+
+    This is currently limited because we do not seem to have any control over
+    the size or number of candidates generated. This could be because I'm using
+    hypothesis wrong, or it could be because hypothesis is not supported.
+
+    References:
+        https://hypothesis.readthedocs.io/en/latest/extras.html?highlight=lark#hypothesis-lark
+        https://pypi.org/project/hypothesmith/
+        https://github.com/HypothesisWorks/hypothesis/blob/master/hypothesis-python/tests/lark/test_grammar.py
+    """
+    import ubelt as ub
+    from hypothesis.extra.lark import from_lark
+    from hypothesis import given
+
+    prog = ub.ProgIter(desc='generating random input')
+
+    with prog:
+        # This sort of works, but it is not clear how to get the return value
+        # without hacks.
+        candidates = []  # hack for output vals
+
+        @given(from_lark(python_parser))
+        def test_generates_string(string):
+            prog.update()
+            candidates.append(string)
+            return None
+        test_generates_string()
+
+    # gen = hlark.from_lark(python_parser)
+    # example = gen.example()
+    # print(example)
+
+    unique_examples = sorted(set(candidates), key=len)
+
+    valid_candidates = []
+    for c in unique_examples:
+        # Some of the candidates seem to be invalid
+        try:
+            python_parser.parse(c)
+        except Exception:
+            pass
+        else:
+            valid_candidates.append(c)
+
+    size_to_cand = {len(s): s for s in valid_candidates}
+    return size_to_cand
+
+
+def simple_lark_grammar(size):
+    """
+    A simple strategy for generating a valid lark grammar of different sizes
     """
     lines = [
         'start: final',
@@ -88,6 +140,13 @@ def benchmark():
         ],
         'size': np.linspace(16, 512, 8).round().astype(int),
     }
+
+    USE_HYPOTHESIS = 1
+    if USE_HYPOTHESIS:
+        # Hack to use the hypothesis generated tests
+        size_to_cand = random_grammar_inputs(python_parser)
+        basis['size'] = sorted(size_to_cand.keys())
+
     xlabel = 'size'
     # Set these to param labels that directly transfer to method kwargs
     kw_labels = []
@@ -111,7 +170,11 @@ def benchmark():
         # Make any modifications you need to compute input kwargs for each
         # method here.
         kwargs = ub.dict_isect(params.copy(),  kw_labels)
-        kwargs['text'] = random_lark_grammar(params['size'])
+        if USE_HYPOTHESIS:
+            kwargs['text'] = size_to_cand[params['size']]
+        else:
+            kwargs['text'] = simple_lark_grammar(params['size'])
+
         method = method_lut[params['method']]
         # Timerit will run some user-specified number of loops.
         # and compute time stats with similar methodology to timeit
@@ -164,6 +227,8 @@ def benchmark():
     print(stats_data)
 
     if 1:
+        # Note: the benchmark template might change to make this section
+        # more universal. Denoting it as separate via if 1
         # Measure speedup
         groups = stats_data.groupby('method')
         other_keys = sorted(set(stats_data.columns) - {'key', 'method', 'min', 'mean', 'hue_key', 'size_key', 'style_key'})
